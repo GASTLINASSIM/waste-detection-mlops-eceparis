@@ -1,0 +1,35 @@
+# --- Web framework ---
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.12
+pydantic==2.9.2
+httpx==0.27.2
+requests==2.32.3
+
+# --- ML / MLflow ---
+mlflow==2.17.0
+torch>=2.6,<2.10
+torchvision>=0.21,<0.25
+transformers==4.45.2
+Pillow==10.4.0
+numpy==1.26.4
+
+# Fork custom Ultralytics pour le modèle fusion
+git+https://github.com/sialaoui/ultralytics.git@feat/yolo-rtdetr
+
+# --- Storage ---
+SQLAlchemy==2.0.35
+
+# --- Observabilité (partagé avec B) ---
+prometheus-client==0.21.0
+python-json-logger==2.0.7
+
+# --- Frontend ---
+streamlit==1.39.0
+streamlit-folium==0.22.0
+folium==0.17.0
+pandas==2.2.3
+
+# --- Tests ---
+pytest==8.3.3
+pytest-asyncio==0.24.0
