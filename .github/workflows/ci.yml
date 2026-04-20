@@ -105,5 +105,5 @@ jobs:
           context: ./api
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/waste-api:latest
-            ghcr.io/${{ github.repository_owner }}/waste-api:${{ github.sha }}
+            ghcr.io/gastlinassim/waste-api:latest
+            ghcr.io/gastlinassim/waste-api:${{ github.sha }}
