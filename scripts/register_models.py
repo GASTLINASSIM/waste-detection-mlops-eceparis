@@ -1,6 +1,6 @@
 """
 Enregistre les 8 modèles dans le MLflow Registry.
-Lancer avec le serveur MLflow accessible sur http://localhost:5000.
+Lancer avec le serveur MLflow http://localhost:5000.
 """
 import torch 
 from pathlib import Path
@@ -63,15 +63,10 @@ def resolve_weights(filename: str) -> str:
     if filename is None:
         return None
 
-    # 1. Cherche d'abord dans models/ du projet
     p = WEIGHTS_DIR / filename
     if p.exists():
         return str(p.resolve())
 
-    # 2. Si fichier yaml : on ne peut pas l'utiliser en artefact MLflow
-    #    (il doit exister comme fichier standalone)
-    #    -> on bascule sur un téléchargement de yolov8n.pt
-    # 3. Fallback universel : télécharger yolov8n.pt depuis ultralytics
     WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
     fallback_path = WEIGHTS_DIR / "yolov8n_fallback.pt"
 
@@ -133,7 +128,6 @@ def main():
                 ],
             )
 
-        # Passe la dernière version en Production
         versions = client.search_model_versions(f"name='{registry_name}'")
         latest = sorted(versions, key=lambda v: int(v.version), reverse=True)[0]
         client.transition_model_version_stage(
