@@ -1,7 +1,6 @@
 """
 API FastAPI — détection de déchets via 8 modèles MLflow.
 """
-import torch
 import io
 import json
 import os
@@ -13,14 +12,11 @@ from pathlib import Path
 import mlflow
 import mlflow.pyfunc
 import numpy as np
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
-# -----------------------------------------------------------------------------
-# Config
-# -----------------------------------------------------------------------------
 MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
 DB_PATH = os.environ.get("APP_DB_PATH", "/data/app_detections.db")
 LOG_PATH = os.environ.get("LOG_PATH", "/app/logs/predictions.jsonl")
@@ -32,9 +28,6 @@ MODEL_SHORT_NAMES = [
     "rfdetr", "dfine", "deim-dfine", "fusion-model",
 ]
 
-# -----------------------------------------------------------------------------
-# Metrics Prometheus
-# -----------------------------------------------------------------------------
 predictions_total = Counter("ml_predictions_total", "Total predictions")
 predictions_by_model = Counter(
     "ml_predictions_by_model_total", "Predictions by model", ["model"]
@@ -44,9 +37,6 @@ inference_latency = Histogram(
     "ml_inference_latency_seconds", "Inference latency in seconds"
 )
 
-# -----------------------------------------------------------------------------
-# App
-# -----------------------------------------------------------------------------
 app = FastAPI(title="Waste Detection API", version="1.0.0")
 MODELS: dict = {}
 
@@ -85,26 +75,28 @@ def startup():
     for short in MODEL_SHORT_NAMES:
         registry_name = f"waste-detector-{short}"
         uri = f"models:/{registry_name}/Production"
+
         try:
-            model = mlflow.pyfunc.load_model(uri)
             versions = client.get_latest_versions(registry_name, stages=["Production"])
             version = versions[0] if versions else None
             registered_model = client.get_registered_model(registry_name)
+
             MODELS[short] = {
-                "model": model,
+                "model": None,
+                "uri": uri,
                 "version": version.version if version else "?",
                 "registered_at": datetime.fromtimestamp(
-                    registered_model.creation_timestamp / 1000, tz=timezone.utc
+                    registered_model.creation_timestamp / 1000,
+                    tz=timezone.utc,
                 ).isoformat(),
             }
-            print(f"✓ Loaded {short} (v{MODELS[short]['version']})")
+
+            print(f"✓ Registered metadata for {short} (v{MODELS[short]['version']})")
+
         except Exception as e:
-            print(f"✗ Failed to load {short}: {e}")
+            print(f"✗ Failed to register metadata for {short}: {e}")
 
 
-# -----------------------------------------------------------------------------
-# Endpoints
-# -----------------------------------------------------------------------------
 @app.get("/health")
 def health():
     return {"status": "ok", "models_loaded": len(MODELS)}
@@ -124,14 +116,13 @@ def list_models():
 
 @app.post("/predict")
 async def predict(
-    file: UploadFile,
+    file: UploadFile = File(...),
     latitude: float = Form(...),
     longitude: float = Form(...),
     model_name: str = Form(...),
     source: str = Form("manual"),
     drone_id: str | None = Form(None),
 ):
-    # --- Validation modèle ---
     if model_name not in MODELS:
         validation_errors.inc()
         raise HTTPException(
@@ -139,7 +130,6 @@ async def predict(
             f"Modèle inconnu '{model_name}'. Modèles valides : {list(MODELS.keys())}",
         )
 
-    # --- Validation fichier ---
     if file.content_type not in ALLOWED_MIME:
         validation_errors.inc()
         raise HTTPException(
@@ -150,17 +140,23 @@ async def predict(
     data = await file.read()
     if len(data) > MAX_IMAGE_BYTES:
         validation_errors.inc()
-        raise HTTPException(422, f"Image trop grande (max 10 Mo, reçu {len(data)/1e6:.1f} Mo)")
+        raise HTTPException(
+            422,
+            f"Image trop grande (max 10 Mo, reçu {len(data) / 1e6:.1f} Mo)",
+        )
 
-    # --- Validation GPS ---
     if not (-90 <= latitude <= 90):
         validation_errors.inc()
-        raise HTTPException(422, f"Latitude invalide : {latitude} (doit être entre -90 et 90)")
+        raise HTTPException(422, f"Latitude invalide : {latitude}")
+
     if not (-180 <= longitude <= 180):
         validation_errors.inc()
-        raise HTTPException(422, f"Longitude invalide : {longitude} (doit être entre -180 et 180)")
+        raise HTTPException(422, f"Longitude invalide : {longitude}")
 
-    # --- Décode image ---
+    if source not in ("manual", "drone_patrol"):
+        validation_errors.inc()
+        raise HTTPException(422, f"Source invalide : {source}")
+
     try:
         img = Image.open(io.BytesIO(data)).convert("RGB")
         arr = np.array(img)
@@ -168,38 +164,45 @@ async def predict(
         validation_errors.inc()
         raise HTTPException(422, f"Impossible de décoder l'image : {e}")
 
-    # --- Validation source ---
-    if source not in ("manual", "drone_patrol"):
-        validation_errors.inc()
-        raise HTTPException(422, f"Source invalide : {source}")
-
-    # --- Inférence ---
     t0 = time.perf_counter()
-    with inference_latency.time():
-        result = MODELS[model_name]["model"].predict([arr])
+
+    try:
+        with inference_latency.time():
+            if MODELS[model_name]["model"] is None:
+                MODELS[model_name]["model"] = mlflow.pyfunc.load_model(
+                    MODELS[model_name]["uri"]
+                )
+
+            result = MODELS[model_name]["model"].predict([arr])
+
+    except Exception as e:
+        validation_errors.inc()
+        raise HTTPException(500, f"Erreur pendant l'inférence : {e}")
+
     latency_ms = (time.perf_counter() - t0) * 1000
 
-    # Le wrapper retourne {rubbish, confiance} (dict) ou [{...}] (liste)
     if isinstance(result, list):
         result = result[0]
+
     rubbish = bool(result["rubbish"])
     confiance = float(result["confiance"])
     ts = datetime.now(timezone.utc).isoformat()
 
-    # --- Persiste ---
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
-        """INSERT INTO app_detections
-           (timestamp, latitude, longitude, confiance, model_name, source, drone_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        """
+        INSERT INTO app_detections
+        (timestamp, latitude, longitude, confiance, model_name, source, drone_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
         (ts, latitude, longitude, confiance, model_name, source, drone_id),
     )
     conn.commit()
     conn.close()
 
-    # --- Metrics + log JSON ---
     predictions_total.inc()
     predictions_by_model.labels(model=model_name).inc()
+
     log_prediction({
         "timestamp": ts,
         "source": source,
