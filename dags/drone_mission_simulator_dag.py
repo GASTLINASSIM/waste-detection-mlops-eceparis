@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
 
 default_args = {
     "owner": "mlops-team",
