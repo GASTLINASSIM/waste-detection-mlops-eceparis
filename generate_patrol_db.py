@@ -9,7 +9,7 @@ import sqlite3
 import random
 from datetime import datetime, timedelta
 
-DB_PATH = "drone_patrol.db"
+DB_PATH = "/data/drone_patrol.db"
 
 DRONES = [
     "drone_001", "drone_002", "drone_003",

@@ -7,14 +7,16 @@ services:
     volumes:
       - mlflow_data:/mlflow
     command: >
-      mlflow server --host 0.0.0.0 --port 5000
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
       --backend-store-uri sqlite:////mlflow/mlflow.db
-      --default-artifact-root /mlflow/artifacts
+      --default-artifact-root file:///mlflow/artifacts
 
   api:
     build:
-      context: ./api
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api/Dockerfile
     container_name: waste-api
     ports:
       - "8000:8000"
@@ -25,8 +27,21 @@ services:
     volumes:
       - shared_data:/data
       - ./logs:/app/logs
+      - mlflow_data:/mlflow
     depends_on:
       - mlflow
+
+  app:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: waste-app
+    ports:
+      - "8501:8501"
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      - api
 
   postgres-airflow:
     image: postgres:15
@@ -47,18 +62,20 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "change-me-in-prod"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: "change-me"
     ports:
       - "8080:8080"
     volumes:
       - ./dags:/opt/airflow/dags
-      - ./generate_patrol_db.py:/opt/airflow/generate_patrol_db.py
+      - .:/opt/airflow/project
       - shared_data:/data
     command: >
-      bash -c "airflow db migrate &&
+      bash -c "
+      airflow db migrate &&
       airflow users create --username admin --password admin --firstname Admin --lastname Admin --role Admin --email admin@example.com || true &&
-      airflow webserver"
+      airflow webserver
+      "
 
   airflow-scheduler:
     image: apache/airflow:2.10.2-python3.11
@@ -69,14 +86,49 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres-airflow/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: "change-me"
+      AIRFLOW__WEBSERVER__SECRET_KEY: "change-me-in-prod"
     volumes:
       - ./dags:/opt/airflow/dags
-      - ./generate_patrol_db.py:/opt/airflow/generate_patrol_db.py
+      - .:/opt/airflow/project
       - shared_data:/data
     command: airflow scheduler
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+    depends_on:
+      - api
+      - alertmanager
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
 
 volumes:
   mlflow_data:
   shared_data:
   pg_data:
+  grafana_data:

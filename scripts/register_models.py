@@ -2,6 +2,7 @@
 Enregistre les 8 modèles dans le MLflow Registry.
 Lancer avec le serveur MLflow http://localhost:5000.
 """
+import os
 import torch 
 from pathlib import Path
 import numpy as np
@@ -9,7 +10,8 @@ from PIL import Image
 import mlflow
 import mlflow.pyfunc
 
-mlflow.set_tracking_uri("http://localhost:5000")
+MLFLOW_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
+mlflow.set_tracking_uri(MLFLOW_URI)
 WEIGHTS_DIR = Path("models")
 
 

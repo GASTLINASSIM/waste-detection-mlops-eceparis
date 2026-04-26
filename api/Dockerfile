@@ -10,13 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Torch CPU AVANT requirements.txt (évite la version CUDA de 10 Go)
+# Torch CPU avant requirements.txt pour éviter CUDA
 RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY api/ .
+COPY models/ ./models/
+COPY scripts/ ./scripts/
 
 RUN mkdir -p /data /app/logs
 
