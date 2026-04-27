@@ -1,55 +1,84 @@
-# Waste Detection MLOps — ECE Paris
+# 🗑️ Waste Detection MLOps
 
-![CI](https://github.com/GASTLINASSIM/waste-detection-mlops-eceparis/actions/workflows/ci.yml/badge.svg)
+![CI]https://github.com/GASTLINASSIM/waste-detection-mlops-eceparis.git
 
-**Members**: Nassim Gastli · Bilel Sahnoun
-**Class** : MSc 2 Data Management & AI
-**Repo**: https://github.com/GASTLINASSIM/waste-detection-mlops-eceparis
+A production-grade MLOps platform for real-time waste detection using drone patrol imagery. The system exposes a multi-model inference API, an automated ETL pipeline, a Streamlit dashboard, and a full observability stack — all orchestrated via Docker Compose.
 
-> **For the grader**: clone the repo, generate the drone database, start the stack, then follow the commands section by section. Criteria marked `[VISUAL]` are evaluated through the UI or the GitHub repository.
+**Authors**: Nassim Gastli · Bilel Sahnoun  
+**Program**: MSc 2 Data Management & AI — ECE Paris
 
 ---
 
-## Setup
- 
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+- [API Reference](#api-reference)
+- [Models](#models)
+- [ETL Pipeline](#etl-pipeline)
+- [Dashboard](#dashboard)
+- [Observability](#observability)
+- [CI/CD](#cicd)
+- [Testing](#testing)
+- [Project Structure](#project-structure)
+
+---
+
+## Architecture
+
+The platform is composed of 7 services running in Docker:
+
+| Service | Role | Port |
+|---|---|---|
+| `api` | FastAPI inference & history endpoints | 8000 |
+| `app` | Streamlit dashboard | 8501 |
+| `airflow` | DAG orchestration (ETL pipeline) | 8080 |
+| `mlflow` | Model registry | 5000 |
+| `prometheus` | Metrics scraping | 9090 |
+| `grafana` | Monitoring dashboard | 3000 |
+| `alertmanager` | Alerting | 9093 |
+
+---
+
+## Prerequisites
+
+- Docker & Docker Compose
+- Python 3.9+
+- `curl`, `sqlite3`, `pytest`
+
+---
+
+## Getting Started
+
+**1. Clone the repository**
+
 ```bash
 git clone https://github.com/GASTLINASSIM/waste-detection-mlops-eceparis.git
 cd waste-detection-mlops-eceparis
+```
+
+**2. Generate the drone patrol database**
+
+```bash
 python generate_patrol_db.py
 ```
- 
+
 Expected output:
 ```
 ✓ Mission simulated — drone_patrol.db updated
   XX new detections inserted
 ```
- 
----
- 
-## Chap. 2 — Packaging & MLflow `/4`
- 
-### `requirements.txt` present `0.25 pt`
- 
-```bash
-ls requirements.txt
-# File must exist at the root of the repo
-```
- 
-### Dockerfile API + Dockerfile App — build without error `0.75 pt`
- 
-```bash
-docker build -t waste-api ./api
-docker build -t waste-app ./app
-```
- 
-### `docker-compose.yml` — full stack in one command `0.75 pt`
- 
+
+**3. Start the full stack**
+
 ```bash
 docker compose up -d
 docker compose ps
 ```
- 
-Expected output — all services `running`:
+
+All 7 services should be in `running` state:
+
 ```
 NAME          STATUS    PORTS
 api           running   0.0.0.0:8000->8000/tcp
@@ -60,422 +89,275 @@ prometheus    running   0.0.0.0:9090->9090/tcp
 grafana       running   0.0.0.0:3000->3000/tcp
 alertmanager  running   0.0.0.0:9093->9093/tcp
 ```
- 
-### MLflow registry — each model loaded `0.25 pt / model (8 models = 2 pts max)`
- 
+
+---
+
+## API Reference
+
+Base URL: `http://localhost:8000`
+
+### `GET /health`
+
+Returns the API status and the number of loaded models.
+
 ```bash
-curl -s http://localhost:8000/models | python -m json.tool
+curl http://localhost:8000/health
 ```
- 
-Expected output — 1 entry per loaded model (0.25 pt each):
+
+```json
+{"status": "ok", "models_loaded": 8}
+```
+
+---
+
+### `GET /models`
+
+Lists all models registered in MLflow with their version and registration date.
+
+```bash
+curl http://localhost:8000/models
+```
+
 ```json
 [
-  {"name": "yolov8",       "version": "1", "registered_at": "..."},
-  {"name": "yolo26",       "version": "1", "registered_at": "..."},
-  {"name": "rtdetr",       "version": "1", "registered_at": "..."},
-  {"name": "rtdetrv2",     "version": "1", "registered_at": "..."},
-  {"name": "rfdetr",       "version": "1", "registered_at": "..."},
-  {"name": "dfine",        "version": "1", "registered_at": "..."},
-  {"name": "deim-dfine",   "version": "1", "registered_at": "..."},
-  {"name": "fusion-model", "version": "1", "registered_at": "..."}
+  {"name": "yolov8", "version": "1", "registered_at": "2024-..."},
+  {"name": "rtdetr",  "version": "1", "registered_at": "2024-..."}
 ]
 ```
- 
-### `GET /models` — version + MLflow registration date `0.25 pt`
- 
-```bash
-curl -s http://localhost:8000/models | python -m json.tool
-# Each entry must contain: name, version, registered_at
-```
- 
+
 ---
- 
-## Chap. 3 — Production Application `/5`
- 
-> `test_image.jpg` is provided in the professor's repo — place it at the root of your repo.
- 
-### Endpoints `/predict`, `/history`, `/health` working `0.75 pt`
- 
+
+### `POST /predict`
+
+Runs inference on an uploaded image. Returns the waste detection result with a confidence score.
+
 ```bash
-curl -s http://localhost:8000/health | python -m json.tool
-# Expected: {"status": "ok", "models_loaded": 8}
- 
-curl -s -X POST http://localhost:8000/predict \
-  -F "file=@test_image.jpg" \
+curl -X POST http://localhost:8000/predict \
+  -F "file=@image.jpg" \
   -F "latitude=48.8566" \
   -F "longitude=2.3522" \
-  -F "model_name=yolov8" \
-  | python -m json.tool
-# Expected: {"rubbish": ..., "confiance": 0.XX, "model_used": "yolov8", "timestamp": "..."}
- 
-curl -s http://localhost:8000/history | python -m json.tool
-# Expected: list of detections
-```
- 
-### Model selection — `model_name` forwarded + HTTP 422 if unknown `0.5 pt`
- 
-```bash
-# Verify that model_used changes based on the requested model
-curl -s -X POST http://localhost:8000/predict \
-  -F "file=@test_image.jpg" -F "latitude=48.8566" -F "longitude=2.3522" \
-  -F "model_name=rtdetr" | python -m json.tool
-# Expected: "model_used": "rtdetr"
- 
-# Unknown model -> 422
-curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/predict \
-  -F "file=@test_image.jpg" -F "latitude=48.8566" -F "longitude=2.3522" \
-  -F "model_name=unknown_model"
-# Expected: 422
-```
- 
-### Input validation — explicit HTTP 422 `0.5 pt`
- 
-```bash
-# Non-image file
-curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/predict \
-  -F "file=@requirements.txt" -F "latitude=48.8566" -F "longitude=2.3522" \
   -F "model_name=yolov8"
-# Expected: 422
- 
-# Invalid GPS coordinates
-curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/predict \
-  -F "file=@test_image.jpg" -F "latitude=999" -F "longitude=2.3522" \
-  -F "model_name=yolov8"
-# Expected: 422
- 
-# Verify the error message is explicit
-curl -s -X POST http://localhost:8000/predict \
-  -F "file=@requirements.txt" -F "latitude=48.8566" -F "longitude=2.3522" \
-  -F "model_name=yolov8" | python -m json.tool
-# Expected: {"detail": "Le fichier doit être JPEG ou PNG (reçu : text/plain)"}
 ```
- 
-### `GET /models` — MLflow info `0.25 pt`
- 
-```bash
-curl -s http://localhost:8000/models | python -m json.tool
-# Verified by the same command as Chap. 2
+
+```json
+{
+  "rubbish": true,
+  "confiance": 0.87,
+  "model_used": "yolov8",
+  "timestamp": "2024-..."
+}
 ```
- 
-### DB storage — `model_name` tracked `0.25 pt`
- 
-```bash
-docker compose exec api \
-  sqlite3 /data/app_detections.db \
-  "SELECT timestamp, model_name, source FROM app_detections ORDER BY timestamp DESC LIMIT 5;"
-# Expected: rows with model_name filled in
-```
- 
-### Unit tests (min. 3) `0.75 pt`
- 
-```bash
-pytest api/tests/test_unit.py -v
-```
- 
-Expected output:
-```
-api/tests/test_unit.py::test_health_ok               PASSED
-api/tests/test_unit.py::test_models_list_has_entries  PASSED or SKIPPED
-api/tests/test_unit.py::test_predict_valid_image      PASSED or SKIPPED
-api/tests/test_unit.py::test_predict_invalid_file     PASSED
-api/tests/test_unit.py::test_predict_invalid_gps      PASSED
-api/tests/test_unit.py::test_predict_unknown_model    PASSED
-```
- 
-### Integration test (min. 1, via Docker) `0.5 pt`
- 
-```bash
-pytest api/tests/test_integration.py -v
-```
- 
-Expected output:
-```
-api/tests/test_integration.py::test_api_end_to_end       PASSED
-api/tests/test_integration.py::test_history_returns_list  PASSED
-```
- 
-### Streamlit interface `1.5 pt` `[VISUAL]` — http://localhost:8501
- 
-- [ ] Model selection dropdown fed by `GET /models`
-- [ ] Image upload + GPS input → result displayed (confidence, model used)
-- [ ] Folium map with historical detections
-- [ ] Filters by source, model, time period
-- [ ] Distinct markers: red (manual upload) / orange (drone patrol)
+
+**Parameters**
+
+| Field | Type | Description |
+|---|---|---|
+| `file` | `image/jpeg` or `image/png` | Image to analyse |
+| `latitude` | float, [-90, 90] | GPS latitude |
+| `longitude` | float, [-180, 180] | GPS longitude |
+| `model_name` | string | One of the registered model names |
+
+**Error responses**
+
+| Code | Cause |
+|---|---|
+| `422` | Invalid file type (non-image) |
+| `422` | GPS coordinates out of range |
+| `422` | Unknown model name |
+
 ---
- 
-## ETL Pipeline — Airflow `/3`
- 
-### DAG 1 `drone_mission_simulator` — automatic execution `0.5 pt`
- 
+
+### `GET /history`
+
+Returns all past detections stored in the database.
+
 ```bash
-# Check automatic runs (schedule every 5 min)
+curl http://localhost:8000/history
+```
+
+---
+
+### `GET /metrics`
+
+Exposes Prometheus metrics for the inference service.
+
+```bash
+curl http://localhost:8000/metrics | grep "^ml_"
+```
+
+| Metric | Description |
+|---|---|
+| `ml_predictions_total` | Total number of predictions |
+| `ml_inference_latency_seconds` | Inference latency histogram |
+| `ml_predictions_by_model_total` | Predictions broken down by model |
+| `ml_validation_errors_total` | Total input validation errors |
+
+---
+
+## Models
+
+Eight object detection models are registered in MLflow and loaded at startup:
+
+| Model | Description |
+|---|---|
+| `yolov8` | YOLOv8 baseline |
+| `yolo26` | YOLOv26 variant |
+| `rtdetr` | RT-DETR transformer detector |
+| `rtdetrv2` | RT-DETRv2 |
+| `rfdetr` | RF-DETR |
+| `dfine` | D-FINE detector |
+| `deim-dfine` | DEIM + D-FINE fusion |
+| `fusion-model` | Ensemble fusion model |
+
+The MLflow registry UI is accessible at `http://localhost:5000`.
+
+---
+
+## ETL Pipeline
+
+Two Airflow DAGs handle automated drone data ingestion.
+
+### DAG 1 — `drone_mission_simulator`
+
+Simulates drone patrol missions on a 5-minute schedule. Generates synthetic detections and inserts them into `drone_patrol.db`.
+
+```bash
+# Check run history
 docker compose exec airflow airflow dags list-runs \
   --dag-id drone_mission_simulator --output table
-# Expected: at least one run with state=success
- 
-# Verify that data was generated
+
+# Verify generated data
 docker compose exec airflow \
   sqlite3 /data/drone_patrol.db \
   "SELECT COUNT(*) FROM drone_detections;"
-# Expected: count > 0
 ```
- 
-### DAG 2 `drone_patrol_sync` — 3 tasks without error `1 pt`
- 
+
+### DAG 2 — `drone_patrol_sync`
+
+Extracts, filters, and loads drone detections into the application database. Triggered automatically by DAG 1 via `TriggerDagRunOperator`.
+
+| Task | Description |
+|---|---|
+| `extract` | Reads new detections from `drone_patrol.db` |
+| `transform` | Filters detections with `confiance >= 0.65` |
+| `load` | Inserts results into `app_detections.db` and sets `processed = 1` |
+
 ```bash
 # Trigger manually if needed
 docker compose exec airflow airflow dags trigger drone_patrol_sync
- 
-# Check overall status
-docker compose exec airflow airflow dags list-runs \
-  --dag-id drone_patrol_sync --output table
-# Expected: state=success
- 
-# Get the latest run_id
+
+# Check task states for the latest run
 RUN_ID=$(docker compose exec airflow airflow dags list-runs \
   --dag-id drone_patrol_sync --output json | python -m json.tool \
   | python -c "import sys,json; runs=json.load(sys.stdin); print(runs[0]['run_id'])")
- 
-# Check each of the 3 tasks
+
 docker compose exec airflow airflow tasks states-for-dag-run \
   drone_patrol_sync "$RUN_ID" --output table
-# Expected:
-# extract   | success
-# transform | success
-# load      | success
 ```
- 
-### Filter `confiance >= 0.65` + flag `processed = 1` `0.5 pt`
- 
-```bash
-# Verify minimum confidence of loaded detections
-docker compose exec api \
-  sqlite3 /data/app_detections.db \
-  "SELECT MIN(confiance) FROM app_detections WHERE source='drone_patrol';"
-# Expected: value >= 0.65
- 
-# Verify processed flag in source database
-docker compose exec airflow \
-  sqlite3 /data/drone_patrol.db \
-  "SELECT processed, COUNT(*) FROM drone_detections GROUP BY processed;"
-# Expected:
-# 0 | N  (confidence < 0.65, not loaded)
-# 1 | M  (loaded into app, M > 0)
-```
- 
-### Airflow UI accessible `0.5 pt`
- 
-```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost:8080
-# Expected: 200 or 302
-```
- 
-`[VISUAL]` http://localhost:8080 — both DAGs visible with execution history
- 
-### Streamlit map — drone detections distinct `0.5 pt` `[VISUAL]` — http://localhost:8501
- 
-- [ ] Detections with `source=drone_patrol` visible on the map
-- [ ] Visually distinct from manual uploads (different color or icon)
-### [Bonus] DAG 2 triggered by DAG 1 via `TriggerDagRunOperator` `+0.5 pt`
- 
-```bash
-docker compose exec airflow airflow dags list-runs \
-  --dag-id drone_patrol_sync --output table
-# The run_type column must show drone_mission_simulator as the trigger origin
-```
- 
+
+The Airflow UI is accessible at `http://localhost:8080`.
+
 ---
- 
-## Chap. 4 — CI/CD `/3`
- 
-### Unit tests + integration test pass in pipeline `0.75 + 0.75 pt`
- 
-```bash
-gh run view --repo GASTLINASSIM/waste-detection-mlops-eceparis --log | grep -E "(test_unit|test_integration|PASSED|FAILED)"
-# Expected: pytest steps successful
+
+## Dashboard
+
+The Streamlit app is accessible at `http://localhost:8501`.
+
+Features:
+- Model selection dropdown populated dynamically from `GET /models`
+- Image upload with GPS input — displays confidence score and model used
+- Interactive Folium map of all historical detections
+- Filters by source, model, and time period
+- Color-coded markers: **red** for manual uploads, **orange** for drone patrol detections
+
+---
+
+## Observability
+
+### Prometheus & Grafana
+
+Prometheus scrapes the `/metrics` endpoint automatically. The Grafana dashboard is accessible at `http://localhost:3000` and includes 4 panels covering prediction volume, inference latency, per-model breakdown, and validation error rate.
+
+The dashboard definition is versioned at `monitoring/grafana/dashboard.json`.
+
+### Structured Logging
+
+Every prediction is appended to `logs/predictions.jsonl` as a structured JSON entry:
+
+```json
+{
+  "timestamp": "2024-...",
+  "model_name": "yolov8",
+  "confiance": 0.87,
+  "source": "manual_upload",
+  "latence_ms": 142
+}
 ```
- 
-`[VISUAL]` https://github.com/GASTLINASSIM/waste-detection-mlops-eceparis/actions — `pytest test_unit.py` and `pytest test_integration.py` steps in green
- 
-### Build + push Docker image to public registry `1 pt`
- 
+
+### Alerting
+
+Alert rules are defined in `monitoring/alertmanager.yml` and loaded into Prometheus at startup.
+
 ```bash
+# Check active rules
+curl http://localhost:9090/api/v1/rules
+
+# Check Alertmanager cluster status
+curl http://localhost:9093/api/v2/status
+```
+
+---
+
+## CI/CD
+
+The GitHub Actions pipeline runs on every push to `main` and on every pull request:
+
+1. Runs unit tests — `pytest api/tests/test_unit.py`
+2. Runs integration tests — `pytest api/tests/test_integration.py`
+3. Builds and pushes the Docker image to GitHub Container Registry
+
+```bash
+# Pull the latest published image
 docker pull ghcr.io/gastlinassim/waste-api:latest
-# Must download without error
 ```
- 
-### Pipeline green + badge in README `0.5 pt`
- 
-```bash
-gh run list --repo GASTLINASSIM/waste-detection-mlops-eceparis --limit 1
-# Expected: conclusion=success on main branch
-```
- 
-`[VISUAL]` CI badge at the top of this README shows `passing`
- 
+
+Pipeline history and logs: https://github.com/GASTLINASSIM/waste-detection-mlops-eceparis/actions
+
 ---
- 
-## Chap. 5 — Observability `/2`
- 
-### Prometheus metrics — 4 metrics on `/metrics` `0.5 pt`
- 
+
+## Testing
+
 ```bash
-# Generate a few predictions first
-for i in 1 2 3; do
-  curl -s -X POST http://localhost:8000/predict \
-    -F "file=@test_image.jpg" -F "latitude=48.8566" -F "longitude=2.3522" \
-    -F "model_name=yolov8" > /dev/null
-done
- 
-# Verify the 4 expected metrics
-curl -s http://localhost:8000/metrics | grep "^ml_"
-# Expected:
-# ml_predictions_total X
-# ml_inference_latency_seconds_count X
-# ml_predictions_by_model_total{model="yolov8"} X
-# ml_validation_errors_total X
- 
-# Verify Prometheus is scraping the API
-curl -s "http://localhost:9090/api/v1/query?query=ml_predictions_total" \
-  | python -m json.tool
-# Expected: non-empty result
+# Unit tests
+pytest api/tests/test_unit.py -v
+
+# Integration tests (requires the stack to be running)
+pytest api/tests/test_integration.py -v
 ```
- 
-### Structured JSON logging `0.5 pt`
- 
-```bash
-tail -5 logs/predictions.jsonl
- 
-# Verify each line is valid JSON with the required fields
-python -c "
-import json
-with open('logs/predictions.jsonl') as f:
-    lines = [l for l in f if l.strip()]
-last = json.loads(lines[-1])
-required = {'timestamp', 'model_name', 'confiance', 'source', 'latence_ms'}
-assert required.issubset(last.keys()), f'Missing fields: {required - last.keys()}'
-print(f'OK — {len(lines)} valid entries, last: {last}')
-"
-```
- 
-### Grafana dashboard — versioned JSON file + 4 panels `0.5 pt`
- 
-```bash
-ls monitoring/grafana/dashboard.json
-# File must exist
- 
-# Verify the dashboard has at least 4 panels
-python -c "
-import json
-d = json.load(open('monitoring/grafana/dashboard.json'))
-panels = d.get('panels', d.get('dashboard', {}).get('panels', []))
-print(f'{len(panels)} panels found')
-assert len(panels) >= 4, 'Less than 4 panels'
-print('OK')
-"
-```
- 
-`[VISUAL]` http://localhost:3000 — "Waste Detection" dashboard with data on all 4 panels
- 
-### Alerting — rule defined and active `0.5 pt`
- 
-```bash
-ls monitoring/alertmanager.yml
-# File must exist
- 
-# Verify rules are loaded in Prometheus
-curl -s http://localhost:9090/api/v1/rules | python -m json.tool
-# Expected: at least one rule group with at least one rule
- 
-# Verify Alertmanager status
-curl -s http://localhost:9093/api/v2/status | python -m json.tool
-# Expected: {"cluster": {"status": "ready", ...}}
-```
- 
+
 ---
- 
-## Git & Quality `/1`
- 
-### Regular commits — both members contributing `0.5 pt`
- 
-```bash
-git shortlog -sn
-# Expected: both members with a significant number of commits
- 
-git log --oneline -15
+
+## Project Structure
+
 ```
- 
-### Correct `.gitignore` `0.25 pt`
- 
-```bash
-# Verify required entries
-grep -E "(__pycache__|\.venv|\.pt|\.db)" .gitignore
- 
-# Verify no forbidden artifacts are tracked
-git ls-files | grep -E "(__pycache__|\.venv|\.pt$)"
-# Expected: no output
+waste-detection-mlops-eceparis/
+├── api/                          # FastAPI inference service
+│   ├── Dockerfile
+│   └── tests/
+│       ├── test_unit.py
+│       └── test_integration.py
+├── app/                          # Streamlit dashboard
+│   └── Dockerfile
+├── dags/                         # Airflow DAGs
+│   ├── drone_mission_simulator.py
+│   └── drone_patrol_sync.py
+├── monitoring/
+│   ├── grafana/
+│   │   └── dashboard.json
+│   └── alertmanager.yml
+├── logs/
+│   └── predictions.jsonl
+├── docker-compose.yml
+├── generate_patrol_db.py
+└── requirements.txt
 ```
- 
-### Professor invited to the private repo `0.25 pt` `[VISUAL]`
- 
-> GitHub → Settings → Collaborators → professor present before the deadline
- 
----
- 
-## Bonus — Additional MLOps component `/+2`
- 
-**Component chosen:** [to be filled in]
- 
-**Justification:** [to be filled in]
- 
-**Implementation:** [to be filled in]
- 
-```bash
-# Demonstration command
-# [to be filled in]
-```
- 
----
- 
-## Quick grading checklist
- 
-```
-COMMANDS
-[ ] docker compose ps                              -> all containers running
-[ ] docker build ./api && docker build ./app        -> build without error
-[ ] curl /health                                    -> {"status": "ok"}
-[ ] curl /models                                    -> 8 models with version + date
-[ ] curl /predict (yolov8)                          -> rubbish + confiance + model_used
-[ ] curl /predict (rtdetr)                          -> model_used = "rtdetr"
-[ ] curl /predict (unknown_model)                   -> HTTP 422
-[ ] curl /predict (requirements.txt)                -> HTTP 422
-[ ] curl /predict (GPS=999)                         -> HTTP 422
-[ ] curl /history                                   -> list of detections
-[ ] sqlite3 app_detections.db (model_name)          -> model_name tracked
-[ ] pytest test_unit.py                             -> PASSED (min. 3)
-[ ] pytest test_integration.py                      -> PASSED (min. 1)
-[ ] airflow dags list-runs drone_mission_sim        -> success
-[ ] airflow tasks states drone_patrol_sync          -> extract+transform+load success
-[ ] sqlite3 app_detections.db MIN(confiance)        -> >= 0.65
-[ ] sqlite3 drone_patrol.db processed               -> 1 for loaded rows
-[ ] curl http://localhost:8080                      -> 200/302
-[ ] docker pull <registry>/<image>                  -> image available
-[ ] gh run list                                     -> success on main
-[ ] curl /metrics | grep ml_                        -> 4 metrics present
-[ ] curl prometheus /api/v1/query                   -> ml_predictions_total non-empty
-[ ] tail logs/predictions.jsonl                     -> valid JSON
-[ ] python validate dashboard.json                  -> >= 4 panels
-[ ] curl prometheus /api/v1/rules                   -> at least one rule
-[ ] curl alertmanager /api/v2/status                -> ready
-[ ] git shortlog -sn                                -> 2 contributors
-[ ] git ls-files | grep pycache                     -> no output
- 
-VISUAL
-[ ] Streamlit http://localhost:8501                 -> dropdown + map + filters + 2 colors
-[ ] Airflow UI http://localhost:8080                -> 2 DAGs with run history
-[ ] MLflow UI http://localhost:5000                 -> 8 models in Production
-[ ] Grafana http://localhost:3000                   -> 4 panels with data
-[ ] GitHub Actions                                  -> badge + all steps green
-[ ] GitHub Settings                                 -> professor invited
-```
- 
